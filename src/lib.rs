@@ -127,9 +127,34 @@ impl fmt::Debug for Set {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum OrNonExhaustive<T> {
+    Value(T),
+    NonExhaustive,
+}
+
+impl<T: Parse> Parse for OrNonExhaustive<T> {
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let input = consume_ws(input);
+        alt((
+            map(T::parse, Self::Value),
+            map(tag(".."), |_| Self::NonExhaustive),
+        ))(input)
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for OrNonExhaustive<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Value(v) => v.fmt(f),
+            Self::NonExhaustive => "..".fmt(f),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Struct {
     pub name: String,
-    pub values: Vec<IdentValue>,
+    pub values: Vec<OrNonExhaustive<IdentValue>>,
 }
 
 impl Struct {
@@ -146,10 +171,22 @@ impl Struct {
 impl fmt::Debug for Struct {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut item = f.debug_struct(&self.name);
+        let mut non_exhaustive = false;
         for v in &self.values {
-            item.field(&v.ident, &v.value);
+            match v {
+                OrNonExhaustive::Value(v) => {
+                    item.field(&v.ident, &v.value);
+                }
+                OrNonExhaustive::NonExhaustive => {
+                    non_exhaustive = true;
+                }
+            }
         }
-        item.finish()
+        if non_exhaustive {
+            item.finish_non_exhaustive()
+        } else {
+            item.finish()
+        }
     }
 }
 
@@ -307,6 +344,7 @@ fn parse_comma_separated_wrapped<'a, T: Parse>(
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
+    use std::fmt;
 
     #[track_caller]
     fn assert_same_debug<T: std::fmt::Debug>(item: &T) {
@@ -359,6 +397,25 @@ mod tests {
         #[allow(unused)]
         struct Foo {
             value: f32,
+        }
+
+        let item = Foo { value: 12.2 };
+        assert_same_debug(&item);
+    }
+
+    #[test]
+    fn object_with_non_exhaustive_debug_impl() {
+        #[allow(unused)]
+        struct Foo {
+            value: f32,
+        }
+
+        impl fmt::Debug for Foo {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Foo")
+                    .field("value", &self.value)
+                    .finish_non_exhaustive()
+            }
         }
 
         let item = Foo { value: 12.2 };
